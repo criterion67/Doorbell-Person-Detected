@@ -1,0 +1,118 @@
+blueprint:
+  name: Doorbell - Person Detected Day/Night
+  description: >
+    This blueprint detects when a person is detected at the doorbell, ensures the
+    front door is closed, and performs specific actions. It only turns on the
+    front porch light at night (after sunset and before sunrise) and ensures the
+    automation hasn’t run in the last 5 minutes. The automation starts when the
+    doorbell detects a person (state changes from "clear" to "detected"). For the
+    automation to proceed, the front door must be closed, a specific person must
+    be at home, and the automation should not have been triggered in the last 5 minutes.
+    If these conditions are met and it is nighttime (after sunset and before sunrise),
+    the front porch light will be turned on. Regardless of the time of day, a video
+    stream from the doorbell camera will be played on the bedroom TV, and a notification
+    will be sent to a mobile app. After a delay of 2 minutes, the front porch light
+    will be turned off if it was turned on. The automation runs in "single" mode,
+    meaning it won't start again if it's already running.
+
+  domain: automation
+  input:
+    doorbell_sensor:
+      name: Doorbell Person Sensor
+      description: The binary sensor for detecting persons at the doorbell
+      selector:
+        entity:
+          domain: binary_sensor
+
+    front_door_sensor:
+      name: Front Door Sensor
+      description: The binary sensor for the front door
+      selector:
+        entity:
+          domain: binary_sensor
+
+    person_entity:
+      name: Person Entity
+      description: The person entity to check if they are home
+      selector:
+        entity:
+          domain: person
+
+    front_porch_light:
+      name: Front Porch Light
+      description: The light switch for the front porch
+      selector:
+        entity:
+          domain: switch
+
+    doorbell_camera:
+      name: Doorbell Camera
+      description: The camera entity for the doorbell
+      selector:
+        entity:
+          domain: camera
+
+    media_player:
+      name: Media Player
+      description: The media player entity to play the doorbell stream
+      selector:
+        entity:
+          domain: media_player
+
+    mobile_device:
+      name: Mobile Device
+      description: The mobile device to send notifications
+      selector:
+        device:
+          integration: mobile_app
+
+trigger:
+  - platform: state
+    entity_id: !input doorbell_sensor
+    from: 'clear'
+    to: 'detected'
+
+condition:
+  - condition: state
+    entity_id: !input front_door_sensor
+    state: 'off'
+
+  - condition: state
+    entity_id: !input person_entity
+    state: 'home'
+
+  - condition: template
+    value_template: >-
+      {{ (as_timestamp(now()) -
+      as_timestamp(state_attr(this.entity_id, 'last_triggered') | default(0))) > 300 }}
+
+action:
+  - choose:
+      - conditions:
+          - condition: sun
+            after: sunset
+          - condition: sun
+            before: sunrise
+        sequence:
+          - type: turn_on
+            device_id: !input front_porch_light
+
+  - service: camera.play_stream
+    data:
+      format: hls
+      media_player: !input media_player
+    target:
+      entity_id: !input doorbell_camera
+
+  - service: notify.mobile_app_{{ mobile_device }}
+    data:
+      message: "There's a person at the front door!"
+      title: "Person Detected!"
+
+  - delay: 
+      minutes: 2
+
+  - type: turn_off
+    device_id: !input front_porch_light
+
+mode: single
